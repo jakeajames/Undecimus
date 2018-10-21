@@ -1,9 +1,9 @@
 #include <pthread.h>
 #include "kmem.h"
 #include "kexecute.h"
-#include "QiLin.h"
 #include "offsets.h"
 #include "iokit.h"
+#include "find_port.h"
 
 mach_port_t prepare_user_client() {
     kern_return_t err;
@@ -39,7 +39,7 @@ void init_kexecute(uint64_t add_x0_x0_0x40_ret) {
     user_client = prepare_user_client();
     
     // From v0rtex - get the IOSurfaceRootUserClient port, and then the address of the actual client, and vtable
-    IOSurfaceRootUserClient_port = getAddressOfPort(getpid(), user_client); // UserClients are just mach_ports, so we find its address
+    IOSurfaceRootUserClient_port = find_port_via_kmem_read(user_client); // UserClients are just mach_ports, so we find its address
     
     IOSurfaceRootUserClient_addr = rk64(IOSurfaceRootUserClient_port + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_KOBJECT)); // The UserClient itself (the C++ object) is at the kobject field
     

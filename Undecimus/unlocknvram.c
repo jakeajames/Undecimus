@@ -13,10 +13,10 @@
 #include <stdlib.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include "kutils.h"
-#include "QiLin.h"
 #include "offsets.h"
 #include "iokit.h"
 #include "kmem.h"
+#include "find_port.h"
 
 // from vtable start in bytes
 unsigned VTB_IODTNVRAM__SEARCHNVRAMPROPERTY = 0x590;
@@ -41,7 +41,7 @@ uint64_t get_iodtnvram_obj(void) {
             ERROR("Failed to get IODTNVRAM service");
             return 0;
         }
-        uint64_t nvram_up = getAddressOfPort(getpid(), IODTNVRAMSrv);
+        uint64_t nvram_up = find_port_via_kmem_read(IODTNVRAMSrv);
         IODTNVRAMObj = rk64(nvram_up + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_KOBJECT));
 
         INFO("IODTNVRAM obj at 0x%llx", IODTNVRAMObj);

