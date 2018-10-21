@@ -26,9 +26,9 @@ UI by [@DennisBednarz](https://twitter.com/DennisBednarz) & [Samg_is_a_Ninja](ht
 * Cydia skips uicache when not needed
 * Cydia supports iPhone X screen size
 * Cydia Substrate for tweak injection
-* Much faster ldrestart 
+* Much faster ldrestart
 * Much more stable ldrestart
-* Changes to Cydia were made with permission from Saurik 
+* Changes to Cydia were made with permission from Saurik
 * Option to skip loading daemons
 * Option to dump APTicket
 * Option to refresh icon cache
@@ -118,7 +118,6 @@ UI by [@DennisBednarz](https://twitter.com/DennisBednarz) & [Samg_is_a_Ninja](ht
 
 ## Special Thanks
 * [@i41nbeer](https://twitter.com/i41nbeer) for triple_fetch, async_wake, empty_list & multi_path
-* [@Morpheus______](https://twitter.com/Morpheus______) for the QiLin Toolkit
 * [@xerub](https://twitter.com/xerub) for libjb and the original patchfinder64
 * [@iBSparkes](https://twitter.com/iBSparkes) for the original amfid_payload, jailbreakd and pspawn_hook
 * [@stek29](https://twitter.com/stek29) for the patchfinder64 additions, unlocknvram and hsp4
@@ -132,3 +131,4 @@ UI by [@DennisBednarz](https://twitter.com/DennisBednarz) & [Samg_is_a_Ninja](ht
 * [@Swag_iOS](https://twitter.com/Swag_iOS) for testing
 * [@jailbreakbuster](https://twitter.com/jailbreakbuster) for testing
 * [@Jakeashacks](https://twitter.com/Jakeashacks) for testing
+
