@@ -13,7 +13,6 @@
 		212D8847216E4DF600A36DA5 /* early_kalloc.c in Sources */ = {isa = PBXBuildFile; fileRef = 212D8846216E4DF600A36DA5 /* early_kalloc.c */; };
 		212D884A216E4EBF00A36DA5 /* async_wake.c in Sources */ = {isa = PBXBuildFile; fileRef = 212D8849216E4EBE00A36DA5 /* async_wake.c */; };
 		2139534C21763A0C00B17F8D /* rsync.tar in Resources */ = {isa = PBXBuildFile; fileRef = 2139534B21763A0B00B17F8D /* rsync.tar */; };
-		21675B63214A68B700D20E2B /* qilin.o in Frameworks */ = {isa = PBXBuildFile; fileRef = 21C0FC8C2136A0D100849420 /* qilin.o */; };
 		21675B6D214A692400D20E2B /* libjb.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 21A97FCF2148103C00DC0023 /* libjb.a */; };
 		219A7C862169439C00A5DD60 /* spawn.tar in Resources */ = {isa = PBXBuildFile; fileRef = 219A7C852169439B00A5DD60 /* spawn.tar */; };
 		21A97FD02148103C00DC0023 /* remote_memory.c in Sources */ = {isa = PBXBuildFile; fileRef = 21A97FC62148103B00DC0023 /* remote_memory.c */; };
@@ -84,8 +83,6 @@
 		21C0FC8521369EE900849420 /* empty_list_sploit.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = empty_list_sploit.c; sourceTree = "<group>"; };
 		21C0FC8621369EE900849420 /* offsets.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = offsets.m; sourceTree = "<group>"; };
 		21C0FC8B21369FC500849420 /* common.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = common.h; sourceTree = "<group>"; };
-		21C0FC8C2136A0D100849420 /* qilin.o */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.objfile"; path = qilin.o; sourceTree = "<group>"; };
-		21C0FC8D2136A0D100849420 /* QiLin.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = QiLin.h; sourceTree = "<group>"; };
 		21C0FC8F2136A2C500849420 /* iokit.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = iokit.h; sourceTree = "<group>"; };
 		21C0FC902136A46500849420 /* SpringBoardServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = SpringBoardServices.framework; sourceTree = "<group>"; };
 		21C130DE214BC2880021AA9D /* unlocknvram.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = unlocknvram.c; sourceTree = "<group>"; };
@@ -117,7 +114,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				21675B6D214A692400D20E2B /* libjb.a in Frameworks */,
-				21675B63214A68B700D20E2B /* qilin.o in Frameworks */,
 				21C0FC912136A46500849420 /* SpringBoardServices.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -181,8 +177,6 @@
 				21A97FCE2148103C00DC0023 /* remote_memory.h */,
 				21C0FC902136A46500849420 /* SpringBoardServices.framework */,
 				21C0FC8F2136A2C500849420 /* iokit.h */,
-				21C0FC8D2136A0D100849420 /* QiLin.h */,
-				21C0FC8C2136A0D100849420 /* qilin.o */,
 				21C0FC8B21369FC500849420 /* common.h */,
 				21C130DE214BC2880021AA9D /* unlocknvram.c */,
 				21C130DF214BC2880021AA9D /* unlocknvram.h */,
@@ -461,6 +455,7 @@
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGN_ENTITLEMENTS = "$(SRCROOT)/Undecimus/multi_path.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
 				CODE_SIGN_STYLE = Manual;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_BITCODE = NO;
@@ -494,6 +489,7 @@
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGN_ENTITLEMENTS = "$(SRCROOT)/Undecimus/multi_path.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
 				CODE_SIGN_STYLE = Manual;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_BITCODE = NO;
